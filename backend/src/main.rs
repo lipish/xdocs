@@ -836,13 +836,13 @@ async fn upload_document(State(state): State<AppState>, Extension(authed): Exten
     let inserted = sqlx::query_as::<_, DocumentRow>(
         r#"
         insert into documents
-            (id, name, mime_type, size, notes, owner_id, permission, allowed_users, is_generated, storage_rel_path)
+            (id, name, mime_type, size, notes, owner_id, permission, allowed_users, is_generated, download_preauthorized, storage_rel_path)
         values
-            ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         returning
             id, name, mime_type, size, notes,
             owner_id, (select username from users where id = owner_id) as owner_name,
-            permission, allowed_users, is_generated, storage_rel_path,
+            permission, allowed_users, is_generated, download_preauthorized, storage_rel_path,
             created_at, updated_at
         "#,
     )
@@ -855,6 +855,7 @@ async fn upload_document(State(state): State<AppState>, Extension(authed): Exten
     .bind(&permission)
     .bind(&allowed_users)
     .bind(is_generated)
+    .bind(false)
     .bind(&rel_path)
     .fetch_one(&state.pool)
     .await;
@@ -915,7 +916,7 @@ async fn patch_document(
         return (StatusCode::FORBIDDEN, "forbidden").into_response();
     }
 
-    let mut permission = body.permission.unwrap_or(existing.permission);
+    let permission = body.permission.unwrap_or(existing.permission);
     if permission != "public" && permission != "private" && permission != "specific" {
         return (StatusCode::BAD_REQUEST, "invalid permission").into_response();
     }

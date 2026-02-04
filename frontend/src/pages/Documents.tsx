@@ -240,7 +240,6 @@ export default function DocumentsPage() {
                         </p>
                       </div>
                     </div>
-                    {getPermissionIcon(doc.permission)}
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -280,7 +279,7 @@ export default function DocumentsPage() {
                           onClick={() => setEditingDoc(doc)}
                         >
                           <Edit className="h-3 w-3 mr-1" />
-                          编辑
+                          分享
                         </Button>
                         <Button
                           variant="outline"
@@ -303,19 +302,11 @@ export default function DocumentsPage() {
         <Dialog open={!!editingDoc} onOpenChange={(open) => !open && setEditingDoc(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>编辑文档</DialogTitle>
-              <DialogDescription>修改文档备注和权限设置</DialogDescription>
+              <DialogTitle>分享文档</DialogTitle>
+              <DialogDescription>设置可见范围与下载权限</DialogDescription>
             </DialogHeader>
             {editingDoc && (
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>备注</Label>
-                  <Textarea
-                    value={editingDoc.notes}
-                    onChange={(e) => setEditingDoc({ ...editingDoc, notes: e.target.value })}
-                    placeholder="描述这个文档是干什么的..."
-                  />
-                </div>
                 <div className="space-y-2">
                   <Label>权限设置</Label>
                   <Select
@@ -382,6 +373,15 @@ export default function DocumentsPage() {
                   <Switch
                     checked={!!editingDoc.downloadPreauthorized}
                     onCheckedChange={(checked) => setEditingDoc({ ...editingDoc, downloadPreauthorized: checked })}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>备注</Label>
+                  <Textarea
+                    value={editingDoc.notes}
+                    onChange={(e) => setEditingDoc({ ...editingDoc, notes: e.target.value })}
+                    placeholder="描述这个文档是干什么的..."
                   />
                 </div>
               </div>
