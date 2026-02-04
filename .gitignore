@@ -1,0 +1,19 @@
+# frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.env
+frontend/.env.*
+
+# backend
+backend/target/
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# misc
+.DS_Store
+*.log
+
+# runtime data
+data/
