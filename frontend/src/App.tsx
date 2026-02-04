@@ -13,6 +13,8 @@ import Generate from "./pages/Generate";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
+import Register from "./pages/Register";
+import DownloadRequests from "./pages/DownloadRequests";
 
 const queryClient = new QueryClient();
 
@@ -34,6 +36,10 @@ function AppRoutes() {
         element={user ? <Navigate to="/dashboard" replace /> : <Login />}
       />
       <Route
+        path="/register"
+        element={user ? <Navigate to="/dashboard" replace /> : <Register />}
+      />
+      <Route
         path="/"
         element={<Navigate to={user ? "/dashboard" : "/login"} replace />}
       />
@@ -50,6 +56,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Documents />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/download-requests"
+        element={
+          <ProtectedRoute>
+            <DownloadRequests />
           </ProtectedRoute>
         }
       />

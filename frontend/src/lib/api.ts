@@ -16,6 +16,49 @@ export function getApiBase(): string {
   return import.meta.env?.VITE_API_BASE ?? "http://127.0.0.1:8752";
 }
 
+export async function apiDownload(path: string, filename?: string): Promise<void> {
+  const url = `${getApiBase()}${path}`;
+  const headers = new Headers();
+
+  const token = getToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const resp = await fetch(url, { headers });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    let data: any = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+    }
+    if (resp.status === 401) {
+      clearToken();
+    }
+    const message = typeof data === "string" ? data : data?.message;
+    throw new Error(message ?? `HTTP ${resp.status}`);
+  }
+
+  const blob = await resp.blob();
+  const cd = resp.headers.get("content-disposition") ?? "";
+  const match = cd.match(/filename="?([^";]+)"?/i);
+  const finalName = filename || (match?.[1] ? decodeURIComponent(match[1]) : "download");
+
+  const a = document.createElement("a");
+  const objectUrl = URL.createObjectURL(blob);
+  a.href = objectUrl;
+  a.download = finalName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export async function apiFetch<T>(
   path: string,
   init: RequestInit = {}

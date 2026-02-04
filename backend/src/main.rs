@@ -21,11 +21,81 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, info};
 use uuid::Uuid;
 
+const DOWNLOAD_APPROVAL_TTL_HOURS_DEFAULT: i64 = 24;
+
 #[derive(Clone)]
 struct AppState {
     pool: PgPool,
     jwt: JwtKeys,
     storage_root: PathBuf,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+struct PendingUser {
+    id: Uuid,
+    username: String,
+    note: String,
+    created_at: DateTime<Utc>,
+}
+
+async fn list_pending_users(State(state): State<AppState>, Extension(authed): Extension<AuthedUser>) -> impl IntoResponse {
+    if !is_admin(&authed) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+
+    let rows = sqlx::query_as::<_, PendingUser>(
+        "select id, username, note, created_at from users where status = 'pending' order by created_at asc",
+    )
+    .fetch_all(&state.pool)
+    .await;
+
+    match rows {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    }
+}
+
+async fn approve_user(
+    State(state): State<AppState>,
+    Extension(authed): Extension<AuthedUser>,
+    AxumPath(id): AxumPath<Uuid>,
+) -> impl IntoResponse {
+    if !is_admin(&authed) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+
+    let res = sqlx::query("update users set status = 'active' where id = $1 and role = 'user'")
+        .bind(id)
+        .execute(&state.pool)
+        .await;
+
+    match res {
+        Ok(r) if r.rows_affected() == 0 => (StatusCode::NOT_FOUND, "not found").into_response(),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    }
+}
+
+async fn disable_user(
+    State(state): State<AppState>,
+    Extension(authed): Extension<AuthedUser>,
+    AxumPath(id): AxumPath<Uuid>,
+) -> impl IntoResponse {
+    if !is_admin(&authed) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+
+    let res = sqlx::query("update users set status = 'disabled' where id = $1 and role = 'user'")
+        .bind(id)
+        .execute(&state.pool)
+        .await;
+
+    match res {
+        Ok(r) if r.rows_affected() == 0 => (StatusCode::NOT_FOUND, "not found").into_response(),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    }
 }
 
 #[derive(Clone)]
@@ -45,7 +115,7 @@ struct Claims {
 struct DbUser {
     id: Uuid,
     username: String,
-    email: String,
+    email: Option<String>,
     role: String,
     created_at: DateTime<Utc>,
 }
@@ -65,7 +135,7 @@ impl From<DbUser> for PublicUser {
         Self {
             id: u.id,
             username: u.username,
-            email: u.email,
+            email: u.email.unwrap_or_default(),
             role: u.role,
             created_at: u.created_at,
         }
@@ -76,6 +146,13 @@ impl From<DbUser> for PublicUser {
 struct LoginRequest {
     email: String,
     password: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RegisterRequest {
+    username: String,
+    password: String,
+    note: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -112,6 +189,7 @@ struct DocumentRow {
     permission: String,
     allowed_users: Vec<Uuid>,
     is_generated: bool,
+    download_preauthorized: bool,
     storage_rel_path: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -130,6 +208,7 @@ struct DocumentDto {
     permission: String,
     allowed_users: Vec<Uuid>,
     is_generated: bool,
+    download_preauthorized: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -147,6 +226,7 @@ struct DocumentApiDto {
     permission: String,
     allowed_users: Vec<Uuid>,
     is_generated: bool,
+    download_preauthorized: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -164,6 +244,7 @@ impl From<DocumentDto> for DocumentApiDto {
             permission: d.permission,
             allowed_users: d.allowed_users,
             is_generated: d.is_generated,
+            download_preauthorized: d.download_preauthorized,
             created_at: d.created_at,
             updated_at: d.updated_at,
         }
@@ -183,10 +264,41 @@ impl From<DocumentRow> for DocumentDto {
             permission: r.permission,
             allowed_users: r.allowed_users,
             is_generated: r.is_generated,
+            download_preauthorized: r.download_preauthorized,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+struct DownloadRequestDto {
+    id: Uuid,
+    document_id: Uuid,
+    requester_id: Uuid,
+    requester_name: String,
+    document_name: String,
+    owner_id: Uuid,
+    owner_name: String,
+    applicant_name: String,
+    applicant_company: String,
+    applicant_contact: String,
+    message: String,
+    status: String,
+    approver_id: Option<Uuid>,
+    approver_name: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CreateDownloadRequest {
+    applicant_name: String,
+    applicant_company: String,
+    applicant_contact: String,
+    message: Option<String>,
 }
 
 #[tokio::main]
@@ -239,13 +351,22 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/auth/login", post(login))
+        .route("/auth/register", post(register))
         .route("/user-directory", get(list_user_directory))
         .route("/me", get(me))
         .route("/users", get(list_users).post(create_user))
         .route("/users/{id}", delete(delete_user))
+        .route("/users/pending", get(list_pending_users))
+        .route("/users/{id}/approve", post(approve_user))
+        .route("/users/{id}/disable", post(disable_user))
         .route("/documents", get(list_documents).post(upload_document))
         .route("/documents/{id}", patch(patch_document).delete(delete_document))
+        .route("/documents/{id}/download-requests", post(create_download_request))
         .route("/documents/{id}/download", get(download_document))
+        .route("/download-requests/mine", get(list_my_download_requests))
+        .route("/download-requests/pending", get(list_pending_download_requests))
+        .route("/download-requests/{id}/approve", post(approve_download_request))
+        .route("/download-requests/{id}/reject", post(reject_download_request))
         .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
@@ -277,7 +398,7 @@ async fn auth_middleware(
     }
 
     let path = req.uri().path();
-    if path == "/healthz" || path == "/auth/login" {
+    if path == "/healthz" || path == "/auth/login" || path == "/auth/register" {
         return next.run(req).await;
     }
 
@@ -335,7 +456,7 @@ async fn ensure_default_admin(pool: &PgPool) -> anyhow::Result<()> {
 
     if let Some((id, _old_username)) = existing {
         sqlx::query(
-            "update users set username = $2, email = $3, password_hash = $4, role = 'admin' where id = $1",
+            "update users set username = $2, email = $3, password_hash = $4, role = 'admin', status = 'active' where id = $1",
         )
         .bind(id)
         .bind(&username)
@@ -349,13 +470,12 @@ async fn ensure_default_admin(pool: &PgPool) -> anyhow::Result<()> {
     }
 
     sqlx::query(
-        "insert into users (id, username, email, password_hash, role) values ($1,$2,$3,$4,$5)",
+        "insert into users (id, username, email, password_hash, role, status, note) values ($1,$2,$3,$4,'admin','active','')",
     )
     .bind(Uuid::new_v4())
     .bind(&username)
     .bind(&email)
     .bind(&password_hash)
-    .bind("admin")
     .execute(pool)
     .await
     .context("insert default admin")?;
@@ -391,8 +511,8 @@ fn sign_jwt(state: &AppState, user_id: Uuid, role: &str) -> anyhow::Result<Strin
 }
 
 async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> impl IntoResponse {
-    let row = sqlx::query_as::<_, (Uuid, String, String, String, String, DateTime<Utc>)>(
-        "select id, username, email, role, password_hash, created_at from users where email = $1 or username = $1",
+    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, String, String, String, DateTime<Utc>)>(
+        "select id, username, email, role, status, password_hash, created_at from users where email = $1 or username = $1",
     )
     .bind(&req.email)
     .fetch_optional(&state.pool)
@@ -402,9 +522,13 @@ async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> 
         Ok(v) => v,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
     };
-    let Some((id, username, email, role, password_hash, created_at)) = maybe else {
+    let Some((id, username, email, role, status, password_hash, created_at)) = maybe else {
         return (StatusCode::UNAUTHORIZED, "invalid credentials").into_response();
     };
+
+    if status != "active" {
+        return (StatusCode::FORBIDDEN, "user not active").into_response();
+    }
 
     match verify_password(&req.password, &password_hash) {
         Ok(true) => {}
@@ -426,6 +550,44 @@ async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> 
     });
 
     (StatusCode::OK, Json(LoginResponse { token, user })).into_response()
+}
+
+async fn register(State(state): State<AppState>, Json(req): Json<RegisterRequest>) -> impl IntoResponse {
+    if req.username.trim().is_empty() || req.password.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "missing fields").into_response();
+    }
+
+    let password_hash = match hash_password(&req.password) {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "hash failed").into_response(),
+    };
+
+    let id = Uuid::new_v4();
+    let note = req.note.unwrap_or_default();
+
+    let res = sqlx::query(
+        "insert into users (id, username, email, password_hash, role, status, note) values ($1,$2,null,$3,'user','pending',$4)",
+    )
+    .bind(id)
+    .bind(req.username.trim())
+    .bind(&password_hash)
+    .bind(note)
+    .execute(&state.pool)
+    .await;
+
+    if let Err(e) = res {
+        if let Some(db_err) = e.as_database_error() {
+            if db_err.constraint() == Some("idx_users_username_unique") {
+                return (StatusCode::CONFLICT, "username exists").into_response();
+            }
+            if db_err.constraint() == Some("users_username_key") {
+                return (StatusCode::CONFLICT, "username exists").into_response();
+            }
+        }
+        return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response();
+    }
+
+    StatusCode::CREATED.into_response()
 }
 
 async fn me(State(state): State<AppState>, Extension(authed): Extension<AuthedUser>) -> impl IntoResponse {
@@ -469,7 +631,7 @@ async fn list_users(State(state): State<AppState>, Extension(authed): Extension<
 
 async fn list_user_directory(State(state): State<AppState>, _authed: Extension<AuthedUser>) -> impl IntoResponse {
     let rows = sqlx::query_as::<_, (Uuid, String, String)>(
-        "select id, username, email from users order by created_at desc",
+        "select id, username, coalesce(email,'') as email from users order by created_at desc",
     )
     .fetch_all(&state.pool)
     .await;
@@ -581,7 +743,7 @@ async fn list_documents(State(state): State<AppState>, Extension(authed): Extens
         select
             d.id, d.name, d.mime_type, d.size, d.notes,
             d.owner_id, u.username as owner_name,
-            d.permission, d.allowed_users, d.is_generated, d.storage_rel_path,
+            d.permission, d.allowed_users, d.is_generated, d.download_preauthorized, d.storage_rel_path,
             d.created_at, d.updated_at
         from documents d
         join users u on u.id = d.owner_id
@@ -716,6 +878,7 @@ struct PatchDocumentRequest {
     notes: Option<String>,
     permission: Option<String>,
     allowed_users: Option<Vec<Uuid>>,
+    download_preauthorized: Option<bool>,
 }
 
 async fn patch_document(
@@ -729,7 +892,7 @@ async fn patch_document(
         select
             d.id, d.name, d.mime_type, d.size, d.notes,
             d.owner_id, u.username as owner_name,
-            d.permission, d.allowed_users, d.is_generated, d.storage_rel_path,
+            d.permission, d.allowed_users, d.is_generated, d.download_preauthorized, d.storage_rel_path,
             d.created_at, d.updated_at
         from documents d
         join users u on u.id = d.owner_id
@@ -764,16 +927,17 @@ async fn patch_document(
 
     let name = body.name.unwrap_or(existing.name);
     let notes = body.notes.unwrap_or(existing.notes);
+    let download_preauthorized = body.download_preauthorized.unwrap_or(existing.download_preauthorized);
 
     let updated = sqlx::query_as::<_, DocumentRow>(
         r#"
         update documents
-        set name = $2, notes = $3, permission = $4, allowed_users = $5, updated_at = now()
+        set name = $2, notes = $3, permission = $4, allowed_users = $5, download_preauthorized = $6, updated_at = now()
         where id = $1
         returning
             id, name, mime_type, size, notes,
             owner_id, (select username from users where id = owner_id) as owner_name,
-            permission, allowed_users, is_generated, storage_rel_path,
+            permission, allowed_users, is_generated, download_preauthorized, storage_rel_path,
             created_at, updated_at
         "#,
     )
@@ -782,6 +946,7 @@ async fn patch_document(
     .bind(&notes)
     .bind(&permission)
     .bind(&allowed_users)
+    .bind(download_preauthorized)
     .fetch_one(&state.pool)
     .await;
 
@@ -844,7 +1009,7 @@ async fn download_document(
         select
             d.id, d.name, d.mime_type, d.size, d.notes,
             d.owner_id, u.username as owner_name,
-            d.permission, d.allowed_users, d.is_generated, d.storage_rel_path,
+            d.permission, d.allowed_users, d.is_generated, d.download_preauthorized, d.storage_rel_path,
             d.created_at, d.updated_at
         from documents d
         join users u on u.id = d.owner_id
@@ -867,6 +1032,33 @@ async fn download_document(
         return (StatusCode::FORBIDDEN, "forbidden").into_response();
     }
 
+    if !is_admin(&authed) && doc.owner_id != authed.id {
+        if !doc.download_preauthorized {
+            let ok = sqlx::query_scalar::<_, bool>(
+                r#"
+                select exists(
+                    select 1
+                    from download_requests r
+                    where r.document_id = $1
+                      and r.requester_id = $2
+                      and r.status = 'approved'
+                      and (r.expires_at is null or r.expires_at > now())
+                )
+                "#,
+            )
+            .bind(doc.id)
+            .bind(authed.id)
+            .fetch_one(&state.pool)
+            .await;
+
+            match ok {
+                Ok(true) => {}
+                Ok(false) => return (StatusCode::FORBIDDEN, "download approval required").into_response(),
+                Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+            }
+        }
+    }
+
     let abs_path = state.storage_root.join(&doc.storage_rel_path);
     let data = match tokio::fs::read(&abs_path).await {
         Ok(v) => v,
@@ -883,6 +1075,286 @@ async fn download_document(
         HeaderValue::from_str(&format!("attachment; filename=\"{}\"", doc.name)).unwrap_or_else(|_| HeaderValue::from_static("attachment")),
     );
     resp
+}
+
+async fn create_download_request(
+    State(state): State<AppState>,
+    Extension(authed): Extension<AuthedUser>,
+    AxumPath(id): AxumPath<Uuid>,
+    Json(body): Json<CreateDownloadRequest>,
+) -> impl IntoResponse {
+    if body.applicant_name.trim().is_empty()
+        || body.applicant_company.trim().is_empty()
+        || body.applicant_contact.trim().is_empty()
+    {
+        return (StatusCode::BAD_REQUEST, "missing fields").into_response();
+    }
+
+    let doc = sqlx::query_as::<_, DocumentRow>(
+        r#"
+        select
+            d.id, d.name, d.mime_type, d.size, d.notes,
+            d.owner_id, u.username as owner_name,
+            d.permission, d.allowed_users, d.is_generated, d.download_preauthorized, d.storage_rel_path,
+            d.created_at, d.updated_at
+        from documents d
+        join users u on u.id = d.owner_id
+        where d.id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await;
+
+    let maybe = match doc {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    };
+    let Some(doc) = maybe else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+
+    if !doc_accessible(&doc, &authed) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+
+    if is_admin(&authed) || doc.owner_id == authed.id {
+        return (StatusCode::BAD_REQUEST, "no need to request").into_response();
+    }
+
+    if doc.download_preauthorized {
+        return (StatusCode::BAD_REQUEST, "download preauthorized").into_response();
+    }
+
+    let message = body.message.unwrap_or_default();
+    let res = sqlx::query(
+        r#"
+        insert into download_requests (
+            id, document_id, requester_id,
+            applicant_name, applicant_company, applicant_contact, message,
+            status
+        ) values ($1,$2,$3,$4,$5,$6,$7,'pending')
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(doc.id)
+    .bind(authed.id)
+    .bind(body.applicant_name.trim())
+    .bind(body.applicant_company.trim())
+    .bind(body.applicant_contact.trim())
+    .bind(message)
+    .execute(&state.pool)
+    .await;
+
+    if let Err(e) = res {
+        if let Some(db_err) = e.as_database_error() {
+            if db_err.constraint() == Some("idx_download_requests_active_unique") {
+                return (StatusCode::CONFLICT, "request already pending").into_response();
+            }
+        }
+        return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response();
+    }
+
+    StatusCode::CREATED.into_response()
+}
+
+async fn list_my_download_requests(
+    State(state): State<AppState>,
+    Extension(authed): Extension<AuthedUser>,
+) -> impl IntoResponse {
+    let rows = sqlx::query_as::<_, DownloadRequestDto>(
+        r#"
+        select
+            r.id,
+            r.document_id,
+            r.requester_id,
+            ru.username as requester_name,
+            d.name as document_name,
+            d.owner_id,
+            ou.username as owner_name,
+            r.applicant_name,
+            r.applicant_company,
+            r.applicant_contact,
+            r.message,
+            r.status,
+            r.approver_id,
+            au.username as approver_name,
+            r.created_at,
+            r.updated_at,
+            r.expires_at
+        from download_requests r
+        join documents d on d.id = r.document_id
+        join users ru on ru.id = r.requester_id
+        join users ou on ou.id = d.owner_id
+        left join users au on au.id = r.approver_id
+        where r.requester_id = $1
+        order by r.created_at desc
+        "#,
+    )
+    .bind(authed.id)
+    .fetch_all(&state.pool)
+    .await;
+
+    match rows {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    }
+}
+
+async fn list_pending_download_requests(
+    State(state): State<AppState>,
+    Extension(authed): Extension<AuthedUser>,
+) -> impl IntoResponse {
+    let rows = if is_admin(&authed) {
+        sqlx::query_as::<_, DownloadRequestDto>(
+            r#"
+            select
+                r.id,
+                r.document_id,
+                r.requester_id,
+                ru.username as requester_name,
+                d.name as document_name,
+                d.owner_id,
+                ou.username as owner_name,
+                r.applicant_name,
+                r.applicant_company,
+                r.applicant_contact,
+                r.message,
+                r.status,
+                r.approver_id,
+                au.username as approver_name,
+                r.created_at,
+                r.updated_at,
+                r.expires_at
+            from download_requests r
+            join documents d on d.id = r.document_id
+            join users ru on ru.id = r.requester_id
+            join users ou on ou.id = d.owner_id
+            left join users au on au.id = r.approver_id
+            where r.status = 'pending'
+            order by r.created_at asc
+            "#,
+        )
+        .fetch_all(&state.pool)
+        .await
+    } else {
+        sqlx::query_as::<_, DownloadRequestDto>(
+            r#"
+            select
+                r.id,
+                r.document_id,
+                r.requester_id,
+                ru.username as requester_name,
+                d.name as document_name,
+                d.owner_id,
+                ou.username as owner_name,
+                r.applicant_name,
+                r.applicant_company,
+                r.applicant_contact,
+                r.message,
+                r.status,
+                r.approver_id,
+                au.username as approver_name,
+                r.created_at,
+                r.updated_at,
+                r.expires_at
+            from download_requests r
+            join documents d on d.id = r.document_id
+            join users ru on ru.id = r.requester_id
+            join users ou on ou.id = d.owner_id
+            left join users au on au.id = r.approver_id
+            where r.status = 'pending' and d.owner_id = $1
+            order by r.created_at asc
+            "#,
+        )
+        .bind(authed.id)
+        .fetch_all(&state.pool)
+        .await
+    };
+
+    match rows {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    }
+}
+
+async fn approve_download_request(
+    State(state): State<AppState>,
+    Extension(authed): Extension<AuthedUser>,
+    AxumPath(id): AxumPath<Uuid>,
+) -> impl IntoResponse {
+    let ttl_hours: i64 = std::env::var("DOWNLOAD_APPROVAL_TTL_HOURS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(DOWNLOAD_APPROVAL_TTL_HOURS_DEFAULT);
+
+    let expires_at = Utc::now() + chrono::Duration::hours(ttl_hours.max(1));
+
+    let res = if is_admin(&authed) {
+        sqlx::query(
+            "update download_requests set status = 'approved', approver_id = $2, approved_at = now(), updated_at = now(), expires_at = $3 where id = $1 and status = 'pending'",
+        )
+        .bind(id)
+        .bind(authed.id)
+        .bind(expires_at)
+        .execute(&state.pool)
+        .await
+    } else {
+        sqlx::query(
+            r#"
+            update download_requests r
+            set status = 'approved', approver_id = $2, approved_at = now(), updated_at = now(), expires_at = $3
+            from documents d
+            where r.id = $1 and r.status = 'pending' and d.id = r.document_id and d.owner_id = $2
+            "#,
+        )
+        .bind(id)
+        .bind(authed.id)
+        .bind(expires_at)
+        .execute(&state.pool)
+        .await
+    };
+
+    match res {
+        Ok(r) if r.rows_affected() == 0 => (StatusCode::NOT_FOUND, "not found").into_response(),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    }
+}
+
+async fn reject_download_request(
+    State(state): State<AppState>,
+    Extension(authed): Extension<AuthedUser>,
+    AxumPath(id): AxumPath<Uuid>,
+) -> impl IntoResponse {
+    let res = if is_admin(&authed) {
+        sqlx::query(
+            "update download_requests set status = 'rejected', approver_id = $2, rejected_at = now(), updated_at = now() where id = $1 and status = 'pending'",
+        )
+        .bind(id)
+        .bind(authed.id)
+        .execute(&state.pool)
+        .await
+    } else {
+        sqlx::query(
+            r#"
+            update download_requests r
+            set status = 'rejected', approver_id = $2, rejected_at = now(), updated_at = now()
+            from documents d
+            where r.id = $1 and r.status = 'pending' and d.id = r.document_id and d.owner_id = $2
+            "#,
+        )
+        .bind(id)
+        .bind(authed.id)
+        .execute(&state.pool)
+        .await
+    };
+
+    match res {
+        Ok(r) if r.rows_affected() == 0 => (StatusCode::NOT_FOUND, "not found").into_response(),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    }
 }
 
 fn sanitize_filename(name: &str) -> String {

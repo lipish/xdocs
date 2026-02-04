@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -23,17 +23,43 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { UserPlus, Trash2, Shield, User } from 'lucide-react';
+import { apiFetch } from '@/lib/api';
+
+type PendingUser = {
+  id: string;
+  username: string;
+  note: string;
+  createdAt: string;
+};
 
 export default function UsersPage() {
   const { users, createUser, deleteUser, isAdmin, user } = useAuth();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
+  const [isPendingLoading, setIsPendingLoading] = useState(false);
   const [newUser, setNewUser] = useState({
     username: '',
     email: '',
     password: '',
     role: 'user' as 'admin' | 'user',
   });
+
+  const refreshPendingUsers = async () => {
+    setIsPendingLoading(true);
+    try {
+      const list = await apiFetch<PendingUser[]>('/users/pending');
+      setPendingUsers(list);
+    } catch {
+      setPendingUsers([]);
+    }
+    setIsPendingLoading(false);
+  };
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    refreshPendingUsers();
+  }, [isAdmin]);
 
   if (!isAdmin) {
     return (
@@ -70,6 +96,30 @@ export default function UsersPage() {
       toast.success(`用户 ${username} 已删除`);
     } else {
       toast.error('无法删除此用户');
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleApprove = async (id: string) => {
+    setIsSubmitting(true);
+    try {
+      await apiFetch<void>(`/users/${id}/approve`, { method: 'POST' });
+      toast.success('已通过');
+      await refreshPendingUsers();
+    } catch (err) {
+      toast.error((err as Error)?.message || '操作失败');
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleDisable = async (id: string) => {
+    setIsSubmitting(true);
+    try {
+      await apiFetch<void>(`/users/${id}/disable`, { method: 'POST' });
+      toast.success('已禁用');
+      await refreshPendingUsers();
+    } catch (err) {
+      toast.error((err as Error)?.message || '操作失败');
     }
     setIsSubmitting(false);
   };
@@ -168,6 +218,54 @@ export default function UsersPage() {
             </DialogContent>
           </Dialog>
         </div>
+
+        <Card className="border-border/50">
+          <CardHeader>
+            <CardTitle className="text-lg">待审核用户</CardTitle>
+            <CardDescription>
+              {isPendingLoading ? '加载中...' : `共 ${pendingUsers.length} 个待审核`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {pendingUsers.length === 0 ? (
+              <div className="text-sm text-muted-foreground">暂无待审核用户</div>
+            ) : (
+              <div className="space-y-3">
+                {pendingUsers.map((u) => (
+                  <div
+                    key={u.id}
+                    className="flex items-center justify-between p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                  >
+                    <div>
+                      <div className="font-medium">{u.username}</div>
+                      {u.note ? (
+                        <div className="text-xs text-muted-foreground mt-1">备注：{u.note}</div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        className="gradient-primary text-white"
+                        disabled={isSubmitting}
+                        onClick={() => handleApprove(u.id)}
+                      >
+                        通过
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isSubmitting}
+                        onClick={() => handleDisable(u.id)}
+                      >
+                        禁用
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         <Card className="border-border/50">
           <CardHeader>

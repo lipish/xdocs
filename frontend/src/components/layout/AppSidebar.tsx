@@ -1,4 +1,4 @@
-import { LayoutDashboard, FileText, Sparkles, Users, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, FileText, Sparkles, ClipboardList, Users, Settings, LogOut } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 const mainNavItems = [
   { title: '仪表盘', url: '/dashboard', icon: LayoutDashboard },
   { title: '文档管理', url: '/documents', icon: FileText },
+  { title: '下载申请', url: '/download-requests', icon: ClipboardList },
   { title: 'AI 生成', url: '/generate', icon: Sparkles },
 ];
 
@@ -31,7 +32,7 @@ export function AppSidebar() {
 
   return (
     <Sidebar className="sidebar-gradient border-r-0">
-      <SidebarHeader className="p-4 border-b border-sidebar-border">
+      <SidebarHeader className="p-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 flex items-center justify-center">
             <img src="/favicon.svg" alt="Logo" className="w-6 h-6" />

@@ -15,6 +15,7 @@ export interface Document {
   permission: PermissionType;
   allowedUsers: string[]; // User IDs for specific permission
   isGenerated: boolean;
+  downloadPreauthorized: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -90,6 +91,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     if (typeof updates.notes === 'string') body.notes = updates.notes;
     if (typeof updates.permission === 'string') body.permission = updates.permission;
     if (Array.isArray(updates.allowedUsers)) body.allowedUsers = updates.allowedUsers;
+    if (typeof updates.downloadPreauthorized === 'boolean') body.downloadPreauthorized = updates.downloadPreauthorized;
 
     try {
       const updated = await apiFetch<Document>(`/documents/${id}`, {
@@ -99,6 +101,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
           notes: body.notes,
           permission: body.permission,
           allowed_users: body.allowedUsers,
+          download_preauthorized: body.downloadPreauthorized,
         }),
       });
       setDocuments((prev) => prev.map((d) => (d.id === id ? updated : d)));
@@ -154,6 +157,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       permission: 'public',
       allowedUsers: [],
       isGenerated: true,
+      downloadPreauthorized: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

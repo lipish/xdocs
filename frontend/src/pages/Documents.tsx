@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useDocuments, Document, PermissionType } from '@/contexts/DocumentContext';
+import { useDocuments } from '@/contexts/DocumentContext';
+import type { Document, PermissionType } from '@/contexts/DocumentContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,12 +25,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { apiDownload, apiFetch } from '@/lib/api';
+import { Switch } from '@/components/ui/switch';
 import {
   Upload,
   FileText,
   Trash2,
   Edit,
   Eye,
+  Download,
   Lock,
   Globe,
   Users,
@@ -45,6 +49,15 @@ export default function DocumentsPage() {
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
   const [uploadNotes, setUploadNotes] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [requestDialogOpen, setRequestDialogOpen] = useState(false);
+  const [requestDoc, setRequestDoc] = useState<Document | null>(null);
+  const [requestForm, setRequestForm] = useState({
+    applicantName: '',
+    applicantCompany: '',
+    applicantContact: '',
+    message: '',
+  });
+  const [isRequesting, setIsRequesting] = useState(false);
 
   const filteredDocs = accessibleDocuments.filter(doc =>
     doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -65,6 +78,49 @@ export default function DocumentsPage() {
       toast.error((error as Error)?.message || '上传失败');
     }
     setIsUploading(false);
+  };
+
+  const handleDownload = async (doc: Document) => {
+    try {
+      await apiDownload(`/documents/${doc.id}/download`, doc.name);
+      toast.success('开始下载');
+    } catch (err) {
+      const msg = (err as Error)?.message || '';
+      if (msg.includes('download approval required')) {
+        setRequestDoc(doc);
+        setRequestDialogOpen(true);
+        return;
+      }
+      toast.error((err as Error)?.message || '下载失败');
+    }
+  };
+
+  const submitDownloadRequest = async () => {
+    if (!requestDoc) return;
+    if (!requestForm.applicantName || !requestForm.applicantCompany || !requestForm.applicantContact) {
+      toast.error('请填写姓名、公司、联系方式');
+      return;
+    }
+
+    setIsRequesting(true);
+    try {
+      await apiFetch<void>(`/documents/${requestDoc.id}/download-requests`, {
+        method: 'POST',
+        body: JSON.stringify({
+          applicant_name: requestForm.applicantName,
+          applicant_company: requestForm.applicantCompany,
+          applicant_contact: requestForm.applicantContact,
+          message: requestForm.message || undefined,
+        }),
+      });
+      toast.success('已提交下载申请，等待审核');
+      setRequestDialogOpen(false);
+      setRequestDoc(null);
+      setRequestForm({ applicantName: '', applicantCompany: '', applicantContact: '', message: '' });
+    } catch (err) {
+      toast.error((err as Error)?.message || '提交失败');
+    }
+    setIsRequesting(false);
   };
 
   const handleUpdateDocument = async (updates: Partial<Document>) => {
@@ -208,6 +264,14 @@ export default function DocumentsPage() {
                       <Eye className="h-3 w-3 mr-1" />
                       查看
                     </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDownload(doc)}
+                    >
+                      <Download className="h-3 w-3 mr-1" />
+                      下载
+                    </Button>
                     {canEdit(doc) && (
                       <>
                         <Button
@@ -309,6 +373,17 @@ export default function DocumentsPage() {
                     </div>
                   </div>
                 )}
+
+                <div className="flex items-center justify-between rounded-lg border border-border/50 p-3">
+                  <div>
+                    <div className="text-sm font-medium">预授权下载</div>
+                    <div className="text-xs text-muted-foreground">开启后，其他可见用户无需申请即可下载</div>
+                  </div>
+                  <Switch
+                    checked={!!editingDoc.downloadPreauthorized}
+                    onCheckedChange={(checked) => setEditingDoc({ ...editingDoc, downloadPreauthorized: checked })}
+                  />
+                </div>
               </div>
             )}
             <DialogFooter>
@@ -321,6 +396,7 @@ export default function DocumentsPage() {
                   notes: editingDoc?.notes,
                   permission: editingDoc?.permission,
                   allowedUsers: editingDoc?.allowedUsers,
+                  downloadPreauthorized: editingDoc?.downloadPreauthorized,
                 })}
               >
                 保存
@@ -361,8 +437,52 @@ export default function DocumentsPage() {
                 <div className="text-sm text-muted-foreground">
                   文件大小: {(viewingDoc.size / 1024).toFixed(2)} KB
                 </div>
+
+                <div className="flex gap-2">
+                  <Button className="gradient-primary text-white" onClick={() => handleDownload(viewingDoc)}>
+                    下载
+                  </Button>
+                  <Button variant="outline" onClick={() => setViewingDoc(null)}>
+                    关闭
+                  </Button>
+                </div>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={requestDialogOpen} onOpenChange={setRequestDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>申请下载</DialogTitle>
+              <DialogDescription>下载需要文档所有者或管理员审批</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>姓名</Label>
+                <Input value={requestForm.applicantName} onChange={(e) => setRequestForm({ ...requestForm, applicantName: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>公司</Label>
+                <Input value={requestForm.applicantCompany} onChange={(e) => setRequestForm({ ...requestForm, applicantCompany: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>联系方式</Label>
+                <Input value={requestForm.applicantContact} onChange={(e) => setRequestForm({ ...requestForm, applicantContact: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>备注（可选）</Label>
+                <Textarea value={requestForm.message} onChange={(e) => setRequestForm({ ...requestForm, message: e.target.value })} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRequestDialogOpen(false)} disabled={isRequesting}>
+                取消
+              </Button>
+              <Button className="gradient-primary text-white" onClick={submitDownloadRequest} disabled={isRequesting}>
+                提交申请
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

@@ -1,37 +1,40 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import { apiFetch } from '@/lib/api';
 
-export default function LoginPage() {
-  const [email, setEmail] = useState('');
+export default function RegisterPage() {
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [note, setNote] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    const res = await login(email, password);
-    if (res.ok) {
-      toast.success('登录成功');
-      navigate('/dashboard');
-    } else {
-      const msg = res.error || '登录失败';
-      if (msg.includes('user not active')) {
-        toast.error('用户未激活，请等待管理员审核通过');
-      } else if (msg.includes('invalid credentials')) {
-        toast.error('账号或密码错误');
-      } else {
-        toast.error(msg);
-      }
+    try {
+      await apiFetch<void>('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          username,
+          password,
+          note: note.trim() ? note : undefined,
+        }),
+      });
+
+      toast.success('注册成功，请等待管理员审核');
+      navigate('/login');
+    } catch (err) {
+      toast.error((err as Error)?.message || '注册失败');
     }
+
     setIsLoading(false);
   };
 
@@ -48,18 +51,18 @@ export default function LoginPage() {
 
         <Card className="border-border/50 shadow-lg">
           <CardHeader className="text-center">
-            <CardTitle>欢迎回来</CardTitle>
-            <CardDescription>请输入您的账户信息登录</CardDescription>
+            <CardTitle>注册账号</CardTitle>
+            <CardDescription>注册后需要管理员审核通过才能登录</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">账号</Label>
+                <Label htmlFor="username">用户名</Label>
                 <Input
-                  id="email"
-                  placeholder="admin"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="username"
+                  placeholder="输入用户名"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   required
                 />
               </div>
@@ -74,22 +77,33 @@ export default function LoginPage() {
                   required
                 />
               </div>
-              <Button
-                type="submit"
-                className="w-full gradient-primary text-white hover:opacity-90"
-                disabled={isLoading}
-              >
-                {isLoading ? '登录中...' : '登录'}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={() => navigate('/register')}
-                disabled={isLoading}
-              >
-                注册账号
-              </Button>
+              <div className="space-y-2">
+                <Label htmlFor="note">备注（可选）</Label>
+                <Textarea
+                  id="note"
+                  placeholder="例如：用途、团队、备注信息"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Button
+                  type="submit"
+                  className="w-full gradient-primary text-white hover:opacity-90"
+                  disabled={isLoading}
+                >
+                  {isLoading ? '提交中...' : '提交注册'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => navigate('/login')}
+                  disabled={isLoading}
+                >
+                  返回登录
+                </Button>
+              </div>
             </form>
           </CardContent>
         </Card>

@@ -19,7 +19,7 @@ interface AuthContextType {
   user: User | null;
   users: User[];
   directoryUsers: DirectoryUser[];
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
   createUser: (username: string, email: string, password: string, role: 'admin' | 'user') => Promise<boolean>;
   deleteUser: (userId: string) => Promise<boolean>;
@@ -63,7 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUsers(list);
   };
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<{ ok: boolean; error?: string }> => {
     try {
       const resp = await apiFetch<{ token: string; user: User }>('/auth/login', {
         method: 'POST',
@@ -73,9 +73,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(resp.user);
       await refreshDirectoryUsers();
       await refreshUsersIfAdmin(resp.user);
-      return true;
-    } catch {
-      return false;
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error)?.message };
     }
   };
 
