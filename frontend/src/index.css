@@ -37,16 +37,16 @@
 
     --radius: 0.75rem;
 
-    /* Sidebar - Dark theme */
-    --sidebar-background: 222 47% 11%;
-    --sidebar-foreground: 210 40% 98%;
+    /* Sidebar - Light gray theme */
+    --sidebar-background: 220 14% 96%;
+    --sidebar-foreground: 222 47% 11%;
     --sidebar-primary: 24 100% 55%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 222 47% 18%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 222 47% 18%;
+    --sidebar-accent: 220 13% 91%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 220 13% 88%;
     --sidebar-ring: 24 100% 55%;
-    --sidebar-muted: 222 30% 30%;
+    --sidebar-muted: 220 9% 46%;
 
     /* Custom gradients */
     --gradient-primary: linear-gradient(135deg, hsl(24, 100%, 55%) 0%, hsl(330, 80%, 60%) 100%);
@@ -117,6 +117,6 @@
   }
 
   .sidebar-gradient {
-    background: linear-gradient(180deg, hsl(222, 47%, 11%) 0%, hsl(222, 47%, 8%) 100%);
+    background: linear-gradient(180deg, hsl(220, 14%, 96%) 0%, hsl(220, 14%, 94%) 100%);
   }
 }
