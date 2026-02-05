@@ -48,29 +48,27 @@ echo -e "✅ cargo: $(command -v cargo)"
 # ============================================================
 # 2. 强制加载 Node.js (nvm)
 # ============================================================
-echo -e "${GREEN}==> 初始化 Node.js 环境 (nvm)...${NC}"
 
-export NVM_DIR="$HOME/.nvm"
+echo -e "${GREEN}==> 初始化 Node.js 环境 (fixed path)...${NC}"
 
-if [ ! -s "$NVM_DIR/nvm.sh" ]; then
-    echo -e "${RED}❌ 错误: 未找到 $NVM_DIR/nvm.sh${NC}"
+NODE_VERSION="v22.17.1"
+NODE_DIR="$HOME/.nvm/versions/node/$NODE_VERSION/bin"
+
+if [ ! -x "$NODE_DIR/node" ]; then
+    echo -e "${RED}❌ 错误: node 不存在于 $NODE_DIR${NC}"
     exit 1
 fi
 
-# shellcheck disable=SC1090
-source "$NVM_DIR/nvm.sh"
-
-# 使用默认版本（或 fallback）
-nvm use default >/dev/null 2>&1 || nvm use 22 >/dev/null 2>&1
+export PATH="$NODE_DIR:$PATH"
 
 if ! command -v npm >/dev/null 2>&1; then
-    echo -e "${RED}❌ 错误: npm 不在 PATH 中${NC}"
+    echo -e "${RED}❌ 错误: npm 不可用${NC}"
     echo "PATH=$PATH"
     exit 1
 fi
 
-echo -e "✅ node: $(command -v node)"
-echo -e "✅ npm : $(command -v npm)"
+echo "✅ node: $(command -v node)"
+echo "✅ npm : $(command -v npm)"
 
 # ============================================================
 # 3. 拉取最新代码
