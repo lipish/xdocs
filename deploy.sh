@@ -48,27 +48,61 @@ echo -e "✅ cargo: $(command -v cargo)"
 # ============================================================
 # 2. 强制加载 Node.js (nvm)
 # ============================================================
+echo -e "${GREEN}==> 初始化 Node.js 环境...${NC}"
 
-echo -e "${GREEN}==> 初始化 Node.js 环境 (fixed path)...${NC}"
-
-NODE_VERSION="v22.17.1"
-NODE_DIR="$HOME/.nvm/versions/node/$NODE_VERSION/bin"
-
-if [ ! -x "$NODE_DIR/node" ]; then
-    echo -e "${RED}❌ 错误: node 不存在于 $NODE_DIR${NC}"
-    exit 1
+# 尝试加载 nvm
+export NVM_DIR="$HOME/.nvm"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck disable=SC1090
+    source "$NVM_DIR/nvm.sh"
+    echo "✅ 已加载 nvm"
+elif [ -s "/usr/local/share/nvm/nvm.sh" ]; then
+    # GitHub Actions 可能的位置
+    source "/usr/local/share/nvm/nvm.sh"
+    echo "✅ 已加载 nvm (System)"
 fi
 
-export PATH="$NODE_DIR:$PATH"
+# 如果加载了 nvm，尝试切换到 LTS 或 default
+if command -v nvm >/dev/null 2>&1; then
+    nvm use default >/dev/null 2>&1 || nvm use node >/dev/null 2>&1 || true
+fi
+
+# 检查 npm 是否可用
+if ! command -v npm >/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️ npm 未在 PATH 中找到，尝试手动添加常见路径...${NC}"
+    
+    # 尝试添加用户级 bin
+    export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+    
+    # 尝试查找并添加 Node 路径 (硬编码备选)
+    POSSIBLE_NODE_DIRS=(
+        "$HOME/.nvm/versions/node/v*/bin"
+        "/usr/local/bin"
+        "/usr/bin"
+    )
+    
+    for dir_pattern in "${POSSIBLE_NODE_DIRS[@]}"; do
+        # 展开通配符
+        for dir in $dir_pattern; do
+            if [ -d "$dir" ] && [ -x "$dir/npm" ]; then
+                echo "✅ 发现 npm: $dir"
+                export PATH="$dir:$PATH"
+                break 2
+            fi
+        done
+    done
+fi
 
 if ! command -v npm >/dev/null 2>&1; then
-    echo -e "${RED}❌ 错误: npm 不可用${NC}"
-    echo "PATH=$PATH"
+    echo -e "${RED}❌ 错误: npm 仍然未找到。请确认 Node.js 已安装并配置正确。${NC}"
+    echo "当前 PATH: $PATH"
     exit 1
 fi
 
-echo "✅ node: $(command -v node)"
-echo "✅ npm : $(command -v npm)"
+echo -e "✅ node: $(node -v) ($(command -v node))"
+echo -e "✅ npm: $(npm -v) ($(command -v npm))"
+
+# (Clean up duplicate check)
 
 # ============================================================
 # 3. 拉取最新代码
