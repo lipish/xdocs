@@ -154,12 +154,25 @@ if [ -f ./backend/.env ]; then
     # shellcheck disable=SC1090
     source ./backend/.env
     set +a
+    
+    # 简单的检查
+    if [ -n "${DATABASE_URL:-}" ]; then
+        echo -e "✅ DATABASE_URL 已加载"
+    else
+        echo -e "${RED}❌ 错误: DATABASE_URL 未设置，请检查 .env 文件${NC}"
+        exit 1
+    fi
 else
-    echo -e "${YELLOW}⚠️ 警告: backend/.env 不存在，可能会导致启动失败${NC}"
+    echo -e "${RED}❌ 错误: backend/.env 不存在，无法启动服务${NC}"
+    exit 1
 fi
 
-# 注意：使用 --update-env 确保重载时更新环境变量
-pm2 reload xdocs-backend --update-env 2>/dev/null || \
+# 停止旧进程（确保环境变量彻底更新）
+echo -e "${GREEN}==> 重置后端服务进程...${NC}"
+pm2 delete xdocs-backend 2>/dev/null || true
+
+# 启动新进程
+# 注意：我们依靠当前 Shell 的环境变量被 PM2 继承
 pm2 start ./backend/target/release/xdocs-backend \
     --name xdocs-backend \
     --cwd ./backend \
