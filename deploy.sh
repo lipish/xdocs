@@ -146,7 +146,20 @@ if ! command -v pm2 >/dev/null 2>&1; then
     exit 1
 fi
 
-pm2 reload xdocs-backend 2>/dev/null || \
+# 加载环境变量
+if [ -f ./backend/.env ]; then
+    echo -e "${GREEN}==> 加载环境变量 (backend/.env)...${NC}"
+    # 使用 set -a 自动导出变量
+    set -a
+    # shellcheck disable=SC1090
+    source ./backend/.env
+    set +a
+else
+    echo -e "${YELLOW}⚠️ 警告: backend/.env 不存在，可能会导致启动失败${NC}"
+fi
+
+# 注意：使用 --update-env 确保重载时更新环境变量
+pm2 reload xdocs-backend --update-env 2>/dev/null || \
 pm2 start ./backend/target/release/xdocs-backend \
     --name xdocs-backend \
     --cwd ./backend \
