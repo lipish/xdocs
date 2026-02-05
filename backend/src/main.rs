@@ -367,7 +367,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/download-requests/pending", get(list_pending_download_requests))
         .route("/download-requests/{id}/approve", post(approve_download_request))
         .route("/download-requests/{id}/reject", post(reject_download_request))
-        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))

@@ -71,7 +71,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     }
 
     const form = new FormData();
-    form.append('file', file);
+    form.append('file', file, file.name);
     form.append('notes', notes);
 
     const created = await apiFetch<Document>('/documents', {

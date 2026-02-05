@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useDocuments } from '@/contexts/DocumentContext';
 import type { Document, PermissionType } from '@/contexts/DocumentContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -49,8 +49,11 @@ export default function DocumentsPage() {
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
   const [uploadNotes, setUploadNotes] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [selectedFileName, setSelectedFileName] = useState('');
+  const [selectedFileCount, setSelectedFileCount] = useState(0);
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [requestDoc, setRequestDoc] = useState<Document | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [requestForm, setRequestForm] = useState({
     applicantName: '',
     applicantCompany: '',
@@ -65,15 +68,27 @@ export default function DocumentsPage() {
   );
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    const maxSize = 200 * 1024 * 1024;
+    const tooLarge = files.find(file => file.size > maxSize);
+    if (tooLarge) {
+      toast.error('单个文件不能超过 200MB');
+      return;
+    }
+    setSelectedFileCount(files.length);
+    setSelectedFileName(files.length === 1 ? files[0].name : '');
 
     setIsUploading(true);
     try {
-      await uploadDocument(file, uploadNotes);
-      toast.success('文档上传成功');
+      for (const file of files) {
+        await uploadDocument(file, uploadNotes);
+      }
+      toast.success(`已上传 ${files.length} 个文档`);
       setUploadDialogOpen(false);
       setUploadNotes('');
+      setSelectedFileName('');
+      setSelectedFileCount(0);
     } catch (error) {
       toast.error((error as Error)?.message || '上传失败');
     }
@@ -184,11 +199,29 @@ export default function DocumentsPage() {
                 <div className="space-y-2">
                   <Label htmlFor="file">选择文件</Label>
                   <Input
+                    ref={fileInputRef}
                     id="file"
                     type="file"
                     onChange={handleFileUpload}
                     disabled={isUploading}
+                    multiple
+                    className="hidden"
                   />
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploading}
+                    >
+                      {isUploading ? '上传中…' : '选择文件'}
+                    </Button>
+                    <span className="text-sm text-muted-foreground">
+                      {selectedFileCount > 1
+                        ? `已选择 ${selectedFileCount} 个文件`
+                        : (selectedFileName ? `已选择：${selectedFileName}` : '未选择文件')}
+                    </span>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="notes">备注（可选）</Label>
