@@ -14,6 +14,8 @@ jobs:
           host: 52.83.216.97
           username: ubuntu
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: 22
+          request_pty: true
           script: |
             cd /home/ubuntu/xdocs
             ./deploy.sh
